@@ -3,6 +3,7 @@ open Async_kernel
 module Unix_sync = Unix
 open Persistent_frontier
 open Frontier_base
+open Mina_stdlib
 
 (* NOTE:
     Here's the implementation of "long_jobs_with_context" found in Async_kernel's
@@ -122,9 +123,6 @@ let testcase_deserialize_root_hash logger dump_path snapshot_name () =
       "Start `deserializae_root_value_from_db`, Current working directory: %s"
       working_directory ;
     [%log info] "Loading database" ;
-    (* NOTE:
-       We expect the DB to not have `root_hash` and `root_common` at this moment
-    *)
     let db = Database.create ~logger ~directory:working_directory in
     [%log info] "Querying root hash from database and attempt to deserialize it" ;
     ( match Database.get_root_hash db with
@@ -137,6 +135,52 @@ let testcase_deserialize_root_hash logger dump_path snapshot_name () =
   in
 
   wrap_as_deferred (deserialize_root_hash logger dump_path snapshot_name)
+
+let testcase_root_data_space_distribution logger dump_path snapshot_name () =
+  let root_data_distribution logger dump_path snapshot_name () =
+    let working_directory = dump_path ^/ snapshot_name in
+    [%log info]
+      "Start `deserializae_root_value_from_db`, Current working directory: %s"
+      working_directory ;
+    [%log info] "Loading database" ;
+    let db = Database.create ~logger ~directory:working_directory in
+    [%log info] "Querying root hash from database and attempt to deserialize it" ;
+    ( match Database.get_root db with
+    | Ok root ->
+        [%log info] "Got Root" ;
+        let open Root_data.Minimal.Stable.V2 in
+        let open Root_data.Common.Stable.V2 in
+        let heap_size (type a) (obj : a) = Obj.reachable_words (Obj.repr obj) in
+        let root_common = common root in
+        [%log info] "Common has size %d" (heap_size root_common) ;
+        let { scan_state = common_scan_state; pending_coinbase } =
+          root_common
+        in
+        [%log info] "Common.Scan_state has size %d"
+          (heap_size common_scan_state) ;
+        [%log info] "Common.Pending_coinbase has size %d"
+          (heap_size pending_coinbase) ;
+
+        let scan_state = common_scan_state.scan_state in
+        [%log info] "Common.Scan_state.Scan_state has size %d"
+          (heap_size scan_state) ;
+        let previous_incomplete_zkapp_updates =
+          common_scan_state.previous_incomplete_zkapp_updates
+        in
+        [%log info]
+          "Common.Scan_state.Previous_incomplete_zkapp_updates has size %d"
+          (heap_size previous_incomplete_zkapp_updates) ;
+        [%log info] "Common.Scan_state.Scan_state.Trees has size %d"
+          (heap_size scan_state.trees) ;
+        [%log info] "Common.Scan_state.Scan_state.Acc has size %d"
+          (heap_size scan_state.acc)
+    | Error _ ->
+        [%log info] "No root found" ) ;
+    [%log info] "Done deserialize_root_hash" ;
+    Database.close db
+  in
+
+  wrap_as_deferred (root_data_distribution logger dump_path snapshot_name)
 
 let () =
   fail_on_long_async_jobs () ;
@@ -163,5 +207,12 @@ let () =
                (testcase_deserialize_root_hash logger dump_path
                   "2025_02-13-07-54-53" )
                false )
+        ] )
+    ; ( "Root data space distribution"
+      , [ test_case "Root data space distribution" `Quick
+            (is_long_job
+               (testcase_root_data_space_distribution logger dump_path
+                  "2025_02-13-07-54-53" )
+               true )
         ] )
     ]

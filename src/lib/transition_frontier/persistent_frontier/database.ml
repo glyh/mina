@@ -267,8 +267,8 @@ let get_if_exists db ~default ~key =
 let get db ~key ~error =
   match get db ~key with Some x -> Ok x | None -> Error error
 
-(* PERF:
-   please don't use this, and use get_root_hash whenever possible. This cost ~90s while get_root_hash is fast
+(**
+Don't use this when possible. It cost ~90s while get_root_hash cost seconds.
 *)
 let get_root t =
   match get_batch t.db ~keys:[ Some_key Root_hash; Some_key Root_common ] with
