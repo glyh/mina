@@ -278,13 +278,17 @@ module Tree = struct
     | Leaf d ->
         Leaf (f_base d)
     | Node { depth; value; sub_tree } ->
+        (* NOTE: enforce evaluation order here *)
+        let value = f_merge depth value in
         Node
           { depth
-          ; value = f_merge depth value
+          ; value
           ; sub_tree =
               map_depth
-                ~f_merge:(fun i (x, y) -> (f_merge i x, f_merge i y))
-                ~f_base:(fun (x, y) -> (f_base x, f_base y))
+                ~f_merge:(fun i (x, y) ->
+                  let left = f_merge i x in (left, f_merge i y))
+                ~f_base:(fun (x, y) ->
+                  let left = f_base x in (left, f_base y))
                 sub_tree
           }
 

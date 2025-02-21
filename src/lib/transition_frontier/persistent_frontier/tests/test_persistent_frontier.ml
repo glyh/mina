@@ -136,6 +136,61 @@ let testcase_deserialize_root_hash logger dump_path snapshot_name () =
 
   wrap_as_deferred (deserialize_root_hash logger dump_path snapshot_name)
 
+let heap_size (type a) (obj : a) = Obj.reachable_words (Obj.repr obj)
+
+let dump_as_dot
+    (trees :
+      ( Transaction_snark_scan_state.Ledger_proof_with_sok_message.Stable.V2.t
+        Parallel_scan.Merge.t
+      , Transaction_snark_scan_state.Transaction_with_witness.t
+        Parallel_scan.Base.t )
+      Parallel_scan.Tree.t
+      Nonempty_list.t ) =
+  let next node_id =
+    node_id := !node_id + 1 ;
+    !node_id
+  in
+  let dump_merge tree_id node_id depth (merge : 'a Parallel_scan.Merge.t) =
+    let _, job = merge in
+    let cur_id = next node_id in
+    let lhs_id = cur_id * 2 in
+    let rhs_id = lhs_id + 1 in
+    let cur = Printf.sprintf {|"%d_%d"|} tree_id cur_id in
+    let lhs = Printf.sprintf {|"%d_%d"|} tree_id lhs_id in
+    let rhs = Printf.sprintf {|"%d_%d"|} tree_id rhs_id in
+    let color =
+      match job with Full _ -> "red" | Part _ -> "yellow" | Empty -> "green"
+    in
+    let size = heap_size merge in
+    Printf.printf "  %s [color=%s, penwidth=3, xlabel=\"depth %d size %d\"]\n"
+      cur color depth size ;
+    Printf.printf "  %s -> {%s %s}\n\n" cur lhs rhs
+  in
+
+  let dump_base tree_id node_id (base : 'b Parallel_scan.Base.t) =
+    let _, job = base in
+    let cur_id = next node_id in
+    let cur = Printf.sprintf {|"%d_%d"|} tree_id cur_id in
+    let color = match job with Full _ -> "red" | Empty -> "green" in
+    let size = heap_size base in
+    Printf.printf "  %s [color=%s, penwidth=3, xlabel=\"size %d\"]\n" cur color
+      size
+  in
+
+  let dump_single_tree tree_id tree =
+    let cur_tree_id = next tree_id in
+    let node_id = ref 0 in
+    Parallel_scan.Tree.map_depth
+      ~f_merge:(dump_merge cur_tree_id node_id)
+      ~f_base:(dump_base cur_tree_id node_id)
+      tree
+    |> ignore
+  in
+  print_string "digraph G {\n" ;
+  let tree_id = ref 0 in
+  Nonempty_list.iter trees ~f:(dump_single_tree tree_id) ;
+  print_string "}\n"
+
 let testcase_root_data_space_distribution logger dump_path snapshot_name () =
   let root_data_distribution logger dump_path snapshot_name () =
     let working_directory = dump_path ^/ snapshot_name in
@@ -150,7 +205,6 @@ let testcase_root_data_space_distribution logger dump_path snapshot_name () =
         [%log info] "Got Root" ;
         let open Root_data.Minimal.Stable.V2 in
         let open Root_data.Common.Stable.V2 in
-        let heap_size (type a) (obj : a) = Obj.reachable_words (Obj.repr obj) in
         let root_common = common root in
         [%log info] "Common has size %d" (heap_size root_common) ;
         let { scan_state = common_scan_state; pending_coinbase } =
@@ -170,10 +224,15 @@ let testcase_root_data_space_distribution logger dump_path snapshot_name () =
         [%log info]
           "Common.Scan_state.Previous_incomplete_zkapp_updates has size %d"
           (heap_size previous_incomplete_zkapp_updates) ;
+        let trees = scan_state.trees in
+        [%log info] "Common.Scan_state.Scan_state.max_base_jobs is %d"
+          scan_state.max_base_jobs ;
         [%log info] "Common.Scan_state.Scan_state.Trees has size %d"
-          (heap_size scan_state.trees) ;
+          (heap_size trees) ;
+        dump_as_dot trees ;
+        let acc = scan_state.acc in
         [%log info] "Common.Scan_state.Scan_state.Acc has size %d"
-          (heap_size scan_state.acc)
+          (heap_size acc)
     | Error _ ->
         [%log info] "No root found" ) ;
     [%log info] "Done deserialize_root_hash" ;
